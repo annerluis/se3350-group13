@@ -394,7 +394,8 @@ function FetchPatientDataScreen({ onClose }: { onClose: () => void }) {
 
     try {
       const response = await apiClient.get(`/getDataOfClinician?username=${username}`);
-      if (response.data.length === 0) {
+      console.log(response);
+      if ((response.data.length) == 0) {
         setError('No patient data found for this clinician.'); 
       } else {
         setPatientData(response.data); //update state with the patient data

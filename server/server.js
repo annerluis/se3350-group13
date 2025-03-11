@@ -1,32 +1,14 @@
-var mysql = require("mysql2"); //Getting SQL information
-
-const jwt = require("jsonwebtoken");
-var bcrypt = require("bcrypt");
-
-var con = mysql.createConnection({
-  //Connecting to SQL server hosting
-  host: "localhost", //Change to match Yugabyte information later
-  user: "root",
-  password: "Sql4ame!",
-  database: "healthcare_app",
-});
-
-con.connect(function (err) {
-  //Connecting to nodemon
-  if (err) throw err;
-  console.log("Connected!");
-});
-
-// establishing connection for YugabyteDB, will need to npm install pg
-const { Pool } = require("pg");
-
-//api stuff begins
-const path = require("path");
 const express = require("express");
-
 const app = express();
-const port = process.env.PORT || 3000;
-var salt = bcrypt.genSaltSync(10);
+const cors = require("cors");
+const path = require("path");
+var bcrypt = require("bcrypt"); // used for password encryption, provides security
+
+app.use(cors());
+app.use(express.json());
+
+// establish connection to YugabyteDB
+/*const { Pool } = require("pg");
 
 // database connection configuration
 const pool = new Pool({
@@ -46,155 +28,231 @@ pool
   })
   .catch((err) => console.log("Database connection error.", err.stack));
 
-//adding middleware to parse request bodies
-app.use(express.json());
-
-app.use("/", express.static(path.join(__dirname, "..", "client")));
-const router = express.Router();
-router.use(express.json());
-
-//middleware for logging
-app.use((req, res, next) => {
-  //for all routes
-  console.log(`${req.method} request for ${req.url}`);
-  next();
+// database queries for yugabyte will use pool.query instead of con.query
+*/
+app.get("/", (req, res) => {
+  res.send("Hello from our server!");
 });
 
+app.listen(8080, () => {
+  console.log("server listening on port 8080");
+});
 
-// the following methods will need to be changed, connected to yugabyte instead of mysql
+var mysql = require("mysql2"); //Getting SQL information
 
-//Searching through database for client
-app.get("/api/usersearch/:name/:village/:region", (req, res) => {
-  const { name, village, region } = req.params;
+var con = mysql.createConnection({
+  //Connecting to SQL server hosting
+  host: "localhost", //Change to match Yugabyte information later
+  user: "root",
+  password: "!",
+  database: "healthcare_app",
+});
 
-  console.log(name, village, region);
+con.connect(function (err) {
+  //Connecting to nodemonasz
+  if (err) throw err;
+  console.log("Connected to MySQL.");
+});
 
-  //Change the queary to fit the current requirements
-  const query = `                     
-        SELECT *
-        FROM patientInfo
-        WHERE fname LIKE ?
-        OR lname LIKE ?
-        OR village LIKE ?
-        OR region LIKE ?;
+// query to retrieve all patients (for testing)
+app.get("/getall", async (req, res) => {
+  try {
+    const patientquery = `SELECT * FROM patient`;
+    const { rows } = await pool.query(patientquery); // because it is an async method
+
+    // print data to console and return
+    console.log(rows);
+    res.status(200).json(rows);
+  } catch {
+    console.error("Error fetching data from 'Patient' table.", error);
+    res
+      .status(500)
+      .json({ error: "Error fetching data from 'Patient' table." });
+  }
+});
+
+// same function, rewritten for MySQL
+app.get("/getallpat", (req, res) => {
+  const patientQuery = "SELECT * FROM patientInfo";
+  con.query(patientQuery, (error, results) => {
+    if (error) {
+      console.error("Error fetching data from 'Patient' table.", error);
+      return res.status(500).json({ error: "Error fetching data from 'Patient' table." });
+    }
+    console.log(results);
+    res.status(200).json(results);
+  });
+});
+
+// rewriting patient retrieval function using sql queries
+app.post("/GetPatientData", (req, res) => {
+  // request body based on some demographic - can be village, region, or geolocation
+
+  // request body is a pair (demographic selection, value)
+  const { demographic, value } = req.body;
+
+  const patientQuery = `SELECT * FROM patientInfo WHERE ${demographic} = '${value}';`;
+
+  con.query(patientQuery, (error, results) => {
+    if (error) {
+      console.log("error occurred while retrieving patient data");
+
+      console.error("Failed to retrieve patient data.", error);
+      res.status(500).json({ error: "Failed to retrieve patient data." });
+    } else {
+      console.log(results); // for debugging
+      res.status(201).json(results);
+    }
+  });
+});
+
+// function to add account in YugabyteDB database
+app.post("/create", async (req, res) => {
+  try {
+    const { fname, lname, empid, username, password } = req.body;
+
+    // hash the password before storing, considered a best practice
+    //const hashedPassword = await bcrypt.hash(password, 10);
+
+    // query to add a patient to the table in the healthcare_app database
+    const addAccountQuery = `
+      INSERT INTO account (fname, lname, empid, username, password)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING *;
     `;
 
-  con.query(query, [name, name, village, region], (error, results) => {
+    // running the query
+    const result = await pool.query(addAccountQuery, [
+      fname,
+      lname,
+      empid,
+      username,
+      password,
+    ]);
+
+    res.status(201).json({
+      message: "Account created successfully.",
+      account: result.rows[0],
+    });
+
+    // print account details to console for debugging
+    console.log(result.rows[0]);
+  } catch (error) {
+    console.error("Error creating account:", error);
+    res.status(500).json({ error: "Failed to create account." });
+  }
+});
+
+//User login function using account table
+app.post("/login", (req, res) => {
+  const { username, password } = req.body;
+
+  //console.log(username);
+
+  const query = `                     
+        SELECT accountType
+        FROM accounts
+        WHERE username LIKE ?
+        AND password LIKE ?;
+    `;
+
+  con.query(query, [username, password], (error, results) => {
     if (error) {
       console.error("Failed to fetch patients by village and/or region", error);
       res.status(500).json({ error: "Failed to fetch patients" });
     } else {
       console.log(results);
-      res.status(200).json(results);
+      res.status(201).json(results);
     }
   });
 });
 
-//Ways to search patients that have a certain sysmptons
-app.get("/api/symptomsearch/:symptom", (req, res) => {
-  const { symptom } = req.params;
+// login function using mysql, from start screen
+app.post("/MainLogin", (req, res) => {
+  const { username, password } = req.body;
 
-  //Change the queary to fit the current requirements
-  const query = `                     
-        SELECT *
-        FROM patientSymptoms
-        WHERE ? = TRUE;
-    `;
+  const loginquery = `SELECT password FROM accounts WHERE username = ?;`; // form of query used for safety
 
-  con.query(query, [symptom], (error, results) => {
+  con.query(loginquery, [username], async (error, results) => {
     if (error) {
-      console.error("Failed to fetch patients by symptoms", error);
-      res.status(500).json({ error: "Failed to fetch patients" });
-    } else {
-      res.status(200).json(results);
+      console.error("Error: Could not perform login.", error);
+      return res.status(500).json({ error: "Failed to login." });
     }
+
+    if (results.length === 0) {
+      return res.status(401).json({ error: "Invalid username or password." });
+    }
+
+    const storedPassword = results[0].password;
+
+    // use bcrypt to compare password entered and password found in database
+    const isMatch = await bcrypt.compare(password, storedPassword);
+
+    // compare passwords, need to implement security later
+
+    /* let isMatch;
+    if (password === storedPassword) {
+      isMatch = false;
+    } else {
+      isMatch = true;
+    } */
+
+    if (!isMatch) {
+      return res.status(401).json({ error: "Invalid username or password." });
+    }
+
+    console.log("Login successful for:", username);
+    res.status(200).json({ message: "Login successful", username });
   });
 });
 
 //healthcare provider accounts stored in account table
-app.post("/api/createaccount", (req, res) => {
-  const { fname, lname, empID, username, password } = req.body;
+app.post("/createaccount", async (req, res) => {
+  const { username, password, accountType, assignedRegion, accessLevel } =
+    req.body;
 
-  //make sure an account with this employee ID doesn't exist
-  const empquery = `SELECT * FROM account WHERE empID = ?`;
+  // Make sure an account with this username doesn't exist
+  const userquery = `SELECT * FROM accounts WHERE username = ?`;
 
-  con.query(empquery, [empID], (error, results) => {
+  con.query(userquery, [username], async (error, results) => {
     if (error) {
-      console.error("Failed to check employee ID", error);
-      return res.status(500).json({ error: "Failed to check employee ID." });
-    } else {
-      if (results.length > 0) {
-        return res.status(400).json({ error: "Employee ID in use." });
-      }
-
-      const userquery = `SELECT * FROM account WHERE username = ?`;
-
-      con.query(userquery, [username], (error, results) => {
-        if (error) {
-          console.error("Failed to check username", error);
-          return res.status(500).json({ error: "Failed to check username." });
-        }
-        if (results.length > 0) {
-          return res.status(400).json({ error: "Username in use." });
-        }
-
-        const addquery = `INSERT INTO account (fname, lname, empID, username, password) VALUES (?, ?, ?, ?, ?)`;
-
-        con.query(
-          addquery,
-          [fname, lname, empID, username, password],
-          (error, results) => {
-            if (error) {
-              console.error("Failed to create account", error);
-              return res
-                .status(500)
-                .json({ error: "Failed to create account." });
-            }
-            return res
-              .status(201)
-              .json({ message: "Account created successfully." });
-          }
-        );
-      });
+      console.error("Failed to check username", error);
+      return res.status(500).json({ error: "Failed to check username." });
     }
-  });
-});
+    if (results.length > 0) {
+      return res.status(400).json({ error: "Username already in use." });
+    }
 
-//User login function using account table
-app.post("/api/login", (req, res) => {
-  const { username, password } = req.body;
+    try {
+      // hash the password before storage, ensure secure data storage
+      const hashedPassword = await bcrypt.hash(password, 10);
 
-  console.log("Login credentials: ", req.body);
+      const addquery = `
+        INSERT INTO accounts (username, password, accountType, assignedRegion, accessLevel)
+        VALUES (?, ?, ?, ?, ?)`;
 
-  const userquery = `                     
-        SELECT password
-        FROM account
-        WHERE username = ?
-    `;
-
-  con.query(userquery, [username], (error, results) => {
-    if (error) {
-      console.error("Failed to login", error);
-      return res.status(500).json({ error: "Failed to fetch accounts" });
-    } else {
-      if (results.length === 0) {
-        console.error("Account with this username could not be found", error);
-        return res
-          .status(500)
-          .json({ error: "Account with this username not found." });
-      }
-
-      if (results[0].password !== password) {
-        console.error("Incorrect password", error);
-        return res.status(500).json({ error: "Incorrect password." });
-      }
-      return res.status(200).json({ message: "Logged in successfully." });
+      con.query(
+        addquery,
+        [username, hashedPassword, accountType, assignedRegion, accessLevel],
+        (error, results) => {
+          if (error) {
+            console.error("Failed to create account", error);
+            return res.status(500).json({ error: "Failed to create account." });
+          }
+          return res
+            .status(201)
+            .json({ message: "Account created successfully." });
+        }
+      );
+    } catch (hashError) {
+      console.error("Error hashing password:", hashError);
+      return res.status(500).json({ error: "Failed to hash password." });
     }
   });
 });
 
 //add patient profile - change these fields
-app.post("/api/addPatient", (req, res) => {
+app.post("/addPatient", (req, res) => {
   console.log("Request received: ", req.body);
 
   const {
@@ -211,7 +269,7 @@ app.post("/api/addPatient", (req, res) => {
   } = req.body;
 
   //make sure the national ID is unique
-  const natidquery = `SELECT * FROM patient WHERE natID = ?`;
+  const natidquery = `SELECT * FROM patientInfo WHERE nationalIDCard = ?`;
 
   con.query(natidquery, [natID], (error, results) => {
     if (error) {
@@ -227,7 +285,7 @@ app.post("/api/addPatient", (req, res) => {
     }
 
     const addquery = `
-        INSERT INTO patient (firstName, lastName, dob, phone, contact, email, village, region, geolocation, natID)
+        INSERT INTO patientInfo (fname, lname, dateOfBirth, phoneNumber, contactPerson, email, village, region, geolocation, nationalIDCard)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     `;
 
@@ -259,132 +317,28 @@ app.post("/api/addPatient", (req, res) => {
   });
 });
 
-//load patient info
-app.post("/api/loadPatientInfo", (req, res) => {
-  const { username } = req.body;
-
-  if (!username) {
-    return res.status(400).json({ error: "Username required." });
-  }
-
-  const sql = "SELECT * FROM accounts WHERE username = ?";
-
-  con.query(sql, [username], (err, result) => {
-    if (err) {
-      console.error("Error retrieving patient info:", err);
-      return res.status(500).json({ error: "Internal server error" });
-    }
-
-    if (result.length === 0) {
-      return res
-        .status(404)
-        .json({ error: "There is no account with this username." });
-    }
-
-    res.json(result[0]); //return patient info
-  });
-});
-
 //add patient profile
-app.post("/api/addPatientInfo", (req, res) => {
+app.post("/addPatientSymptoms", (req, res) => {
   console.log("Request received: ", req.body);
 
   const {
-    user,
-    fname,
-    lname,
-    dob,
-    phone,
-    contact,
-    email,
-    village,
-    region,
-    geo,
     natID,
-  } = req.body;
-
-  //make sure the username is unique - if not, return
-  const checkuser = `SELECT * FROM accounts WHERE username = ?`;
-
-  con.query(checkuser, [user], (error, results) => {
-    if (error) {
-      console.error("Error inserting patient:", error);
-      return res.status(500).json({ error: "Failed to add patient profile" });
-    }
-
-    if ((results.length = 0)) {
-      console.log("Patient profile does not exsist.");
-      return res
-        .status(500)
-        .json({ error: "Patient profile with this username already exists." });
-    }
-
-    const query = `
-        INSERT INTO patientInfo VALUES (
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        ?,
-        ?);
-    `;
-
-    con.query(
-      query,
-      [
-        user,
-        fname,
-        lname,
-        dob,
-        phone,
-        contact,
-        email,
-        village,
-        region,
-        geo,
-        natID,
-      ],
-      (error, results) => {
-        if (error) {
-          console.error("Error inserting patient:", error);
-          return res
-            .status(500)
-            .json({ error: "Failed to add patient profile" });
-        }
-
-        res.status(201).json({ message: "Patient added successfully." });
-      }
-    );
-  });
-});
-
-//add patient profile
-app.post("/api/addPatientSymptoms", (req, res) => {
-  console.log("Request received: ", req.body);
-
-  const {
-    user,
-    bluredVis,
-    nightVis,
-    lightSen,
+    blurredVision,
+    poorNightVision,
+    lightSensitivity,
     eyePain,
-    burning,
+    burningFeeling,
     redEyes,
-    eyelidSwell,
-    yellowEyes,
+    swollenEyelids,
+    yellowedEyes,
     wateryEyes,
-    buldgingEyes,
+    bulgingEyes,
   } = req.body;
 
   //make sure the username is unique - if not, return
-  const checkuser = `SELECT * FROM accounts WHERE username = ?`;
+  const checkuser = `SELECT * FROM patientInfo WHERE nationalIDCard = ?`;
 
-  con.query(checkuser, [user], (error, results) => {
+  con.query(checkuser, [natID], (error, results) => {
     if (error) {
       console.error("Error inserting patient:", error);
       return res.status(500).json({ error: "Failed to add patient profile" });
@@ -415,17 +369,17 @@ app.post("/api/addPatientSymptoms", (req, res) => {
     con.query(
       query,
       [
-        user,
-        bluredVis,
-        nightVis,
-        lightSen,
+        natID,
+        blurredVision,
+        poorNightVision,
+        lightSensitivity,
         eyePain,
-        burning,
+        burningFeeling,
         redEyes,
-        eyelidSwell,
-        yellowEyes,
+        swollenEyelids,
+        yellowedEyes,
         wateryEyes,
-        buldgingEyes,
+        bulgingEyes,
       ],
       (error, results) => {
         if (error) {
@@ -441,12 +395,134 @@ app.post("/api/addPatientSymptoms", (req, res) => {
   });
 });
 
-// Starting the server on port 3000,
-app.listen(port, () => {
-  console.log(`Server is running on http://localhost:${port}`);
+//add patient profile
+app.post("/addPatientExam", (req, res) => {
+  console.log("Request received: ", req.body);
+
+  const { natID, clinician, eyeProblems, score } = req.body;
+
+  //make sure the username is unique - if not, return
+  const checkuser = `SELECT * FROM patientInfo WHERE nationalIDCard = ?`;
+
+  con.query(checkuser, [natID], (error, results) => {
+    if (error) {
+      console.error("Error inserting patient:", error);
+      return res.status(500).json({ error: "Failed to add patient profile" });
+    }
+
+    if ((results.length = 0)) {
+      console.log("Patient profile does not exsist.");
+      return res
+        .status(500)
+        .json({ error: "Patient profile with this username already exists." });
+    }
+
+    const checkdoctor = `SELECT * FROM accounts WHERE username = ?`;
+
+    con.query(checkdoctor, [natID], (error, results) => {
+      if (error) {
+        console.error("Error inserting patient:", error);
+        return res.status(500).json({ error: "Failed to add patient profile" });
+      }
+
+      if ((results.length = 0)) {
+        console.log("Clinician profile does not exsist.");
+        return res
+          .status(500)
+          .json({ error: "Clinician profile does not exsist." });
+      }
+
+      const query = `
+          INSERT INTO patientExam VALUES (
+          ?,
+          ?,
+          ?,
+          ?);
+      `;
+
+      con.query(
+        query,
+        [natID, clinician, eyeProblems, score],
+        (error, results) => {
+          if (error) {
+            console.error("Error inserting patient:", error);
+            return res
+              .status(500)
+              .json({ error: "Failed to add patient profile" });
+          }
+
+          res.status(201).json({ message: "Patient added successfully." });
+        }
+      );
+    });
+  });
 });
 
-app.use((req, res, next) => {
-  console.log(`${req.method} request for ${req.url}`);
-  next();
+//get patient data from a clinician
+app.get("/getDataOfClinician", (req, res) => {
+  const clinicianUsername = req.query.username; //get clinician username
+
+  if (!clinicianUsername) {
+    return res.status(400).json({ error: "Clinician username is required." });
+  }
+
+  const query = `
+    SELECT pi.*, ps.*, pe.*
+    FROM patientInfo pi
+    LEFT JOIN patientSymptoms ps ON pi.nationalIDCard = ps.nationalIDCard
+    LEFT JOIN patientExam pe ON pi.nationalIDCard = pe.nationalIDCard
+    WHERE pe.clinician = ?;
+  `;
+
+  con.query(query, [clinicianUsername], (error, results) => {
+    if (error) {
+      console.error("Error:", error);
+      return res.status(500).json({ error: "Failed to fetch patient data." });
+    }
+
+    //console.log(results.length);
+
+    if ((results.length) == 0) {
+      return res
+        .status(404)
+        .json({ message: "No patient data found for this clinician." });
+    }
+
+    res.status(200).json(results);
+  });
+});
+
+//get aggregated data for admin
+app.get("/getAggregatedData", (req, res) => {
+  const query = `
+    SELECT 
+      pi.region,
+      COUNT(*) AS total_patients,
+      SUM(CASE WHEN ps.bluredVision THEN 1 ELSE 0 END) AS total_blurred_vision,
+      SUM(CASE WHEN ps.nightVision THEN 1 ELSE 0 END) AS total_night_vision,
+      SUM(CASE WHEN ps.eyePain THEN 1 ELSE 0 END) AS total_eye_pain
+    FROM patientInfo pi
+    LEFT JOIN patientSymptoms ps ON pi.nationalIDCard = ps.nationalIDCard
+    LEFT JOIN patientExam pe ON pi.nationalIDCard = pe.nationalIDCard
+    GROUP BY pi.region;
+
+  `;
+
+  con.query(query, (error, results) => {
+    if (error) {
+      console.error("Error:", error);
+      return res
+        .status(500)
+        .json({ error: "Failed to fetch aggregated data." });
+    }
+
+    if (results.rows.length === 0) {
+      //if no data
+      return res
+        .status(404)
+        .json({ message: "No aggregated data is available!" });
+    }
+
+    res.status(200).json(results); //return aggregated data
+  });
 });

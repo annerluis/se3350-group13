@@ -52,7 +52,7 @@ CREATE TABLE patientExam (
     nationalIDCard VARCHAR(30),
     clinician VARCHAR(30),
 
-    eyeProblems INT,
+    eyeProblems VARCHAR(40),
     eyeScore INT,
 
     
